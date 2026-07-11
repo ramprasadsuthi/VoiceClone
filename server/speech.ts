@@ -306,13 +306,15 @@ export class SpeechEngine {
     speed: number, // 0.5 to 2.0
     pitch: number, // -10 to +10 semitones
     volume: number, // 0.0 to 1.0
-    emotion: "Neutral" | "Happy" | "Excited" | "Serious" | "Calm"
+    emotion: "Neutral" | "Happy" | "Excited" | "Serious" | "Calm",
+    forceEngine?: "Gemini" | "Local DSP"
   ): Promise<{ 
     audioBuffer: Buffer; 
     durationSeconds: number; 
     pcmSampleRate: number;
     isFallback: boolean;
     engine: "Gemini TTS" | "Local DSP";
+    quotaExceeded?: boolean;
   }> {
     const voice = db.getVoice(voiceId);
     if (!voice || voice.status !== "Ready") {
@@ -320,11 +322,12 @@ export class SpeechEngine {
     }
 
     const charactersCount = text.length;
-    console.log(`SpeechEngine: Generating speech for voice ${voice.voiceName} (${voice.genderProfile}) - Text length: ${charactersCount}`);
+    console.log(`SpeechEngine: Generating speech for voice ${voice.voiceName} (${voice.genderProfile}) - Text length: ${charactersCount} (Engine requested: ${forceEngine || "Default"})`);
 
+    let quotaExceeded = false;
     try {
       const aiClient = this.initAI();
-      if (aiClient) {
+      if (aiClient && forceEngine !== "Local DSP") {
         // Map our gender profile to an appropriate Gemini TTS base prebuilt voice
         // Valid Gemini voice names: Puck, Charon, Kore, Fenrir, Aoede
         let prebuiltVoice = "Charon"; // Default to a standard warm masculine/neutral voice
@@ -401,7 +404,11 @@ export class SpeechEngine {
         }
       }
     } catch (apiErr: any) {
-      console.warn("SpeechEngine: Gemini TTS Synthesis failed, using high-quality synthesized fallback. Details:", apiErr?.message || apiErr);
+      const errStr = typeof apiErr === "object" ? JSON.stringify(apiErr) : String(apiErr);
+      if (errStr.includes("429") || errStr.includes("quota") || errStr.includes("RESOURCE_EXHAUSTED")) {
+        quotaExceeded = true;
+      }
+      console.log(`SpeechEngine: Gemini TTS Synthesis fallback active. Details: ${apiErr?.message || apiErr}`);
     }
 
     // High-quality Synthesized DSP Fallback (Generates simulated speaking waveforms to make the app fully functional offline)
@@ -415,11 +422,16 @@ export class SpeechEngine {
     
     const pcmBuffer = Buffer.alloc(totalSamples * 2); // 16-bit PCM = 2 bytes per sample
 
+    // Safe extraction of voice properties to prevent NaN calculation issues
+    const genderProfile = voice.genderProfile || "neutral";
+    const basePitchOffset = typeof voice.basePitchOffset === "number" ? voice.basePitchOffset : 0;
+    const formantShift = typeof voice.formantShift === "number" ? voice.formantShift : 1.0;
+
     // Basic Formant Voice Synthesis algorithm (Fof/Pulse train)
     // Generate vocal cord glottal pulses modulated by text character characteristics
-    const finalPitch = voice.genderProfile === "female" ? 220 : voice.genderProfile === "male" ? 110 : 150;
-    const pitchMultiplier = Math.pow(2, (pitch + voice.basePitchOffset) / 12);
-    const fundamentalFreq = finalPitch * pitchMultiplier;
+    const finalPitch = genderProfile === "female" ? 220 : genderProfile === "male" ? 110 : 150;
+    const pitchMultiplier = Math.pow(2, (pitch + basePitchOffset) / 12);
+    const fundamentalFreq = Math.max(50, Math.min(600, finalPitch * (isNaN(pitchMultiplier) ? 1.0 : pitchMultiplier)));
 
     for (let i = 0; i < totalSamples; i++) {
       const t = i / sampleRate;
@@ -429,7 +441,7 @@ export class SpeechEngine {
       const silenceGate = wordEnvelope > 0.15 ? 1.0 : 0.0;
 
       // Base glottal wave (sawtooth modulated with soft sine to avoid harsh clicks)
-      const period = sampleRate / fundamentalFreq;
+      const period = Math.max(2, sampleRate / fundamentalFreq);
       const phase = (i % Math.floor(period)) / period;
       let wave = 0;
 
@@ -444,12 +456,13 @@ export class SpeechEngine {
       // Resonate with formant vocal tract filters (bandpass center frequencies)
       // Standard vowels: Formant 1 (F1) and Formant 2 (F2)
       // Male average: A (730, 1090), I (270, 2290), U (300, 870)
-      const f1 = (voice.genderProfile === "female" ? 850 : 650) * voice.formantShift;
-      const f2 = (voice.genderProfile === "female" ? 2100 : 1500) * voice.formantShift;
+      const f1 = (genderProfile === "female" ? 850 : 650) * formantShift;
+      const f2 = (genderProfile === "female" ? 2100 : 1500) * formantShift;
 
       // Formant wave resonances
-      const resonance1 = Math.sin(2 * Math.PI * f1 * t) * Math.exp(-200 * (t % (1 / fundamentalFreq)));
-      const resonance2 = Math.sin(2 * Math.PI * f2 * t) * Math.exp(-350 * (t % (1 / fundamentalFreq)));
+      const fundamentalPeriod = 1 / fundamentalFreq;
+      const resonance1 = Math.sin(2 * Math.PI * (isNaN(f1) ? 650 : f1) * t) * Math.exp(-200 * (t % fundamentalPeriod));
+      const resonance2 = Math.sin(2 * Math.PI * (isNaN(f2) ? 1500 : f2) * t) * Math.exp(-350 * (t % fundamentalPeriod));
 
       // Combine voice source + vocal tract resonance filter
       let sampleVal = (wave + 0.4 * resonance1 + 0.3 * resonance2) * wordEnvelope * silenceGate;
@@ -458,12 +471,17 @@ export class SpeechEngine {
       const breathNoise = (Math.random() * 2 - 1) * 0.05 * (1.0 - silenceGate * 0.7);
       sampleVal += breathNoise;
 
+      if (isNaN(sampleVal)) {
+        sampleVal = 0;
+      }
+
       // Apply dynamic volume and EQ
       sampleVal = sampleVal * volume * 15000; // scale to 16-bit range
 
       // Soft clipping safety limits
       if (sampleVal > 32767) sampleVal = 32767;
       if (sampleVal < -32768) sampleVal = -32768;
+      if (isNaN(sampleVal)) sampleVal = 0;
 
       pcmBuffer.writeInt16LE(Math.floor(sampleVal), i * 2);
     }
@@ -475,6 +493,7 @@ export class SpeechEngine {
       pcmSampleRate: sampleRate,
       isFallback: true,
       engine: "Local DSP",
+      quotaExceeded,
     };
   }
 }

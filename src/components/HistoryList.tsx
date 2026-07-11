@@ -33,7 +33,7 @@ export default function HistoryList({ history, onDelete }: HistoryListProps) {
     } else {
       setPlayingItemId(item.id);
       if (audioRef.current) {
-        audioRef.current.src = item.outputAudioUrl;
+        audioRef.current.src = item.outputAudioUrlMp3 || item.outputAudioUrl;
         audioRef.current.load();
         audioRef.current.play()
           .catch((err) => {
@@ -71,6 +71,31 @@ export default function HistoryList({ history, onDelete }: HistoryListProps) {
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
+  };
+
+  const downloadFile = async (url: string, filename: string) => {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Network response was not ok");
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      console.error("Failed to download file:", error);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.target = "_blank";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   };
 
   return (
@@ -227,29 +252,29 @@ export default function HistoryList({ history, onDelete }: HistoryListProps) {
                 </button>
 
                 {/* Download WAV File */}
-                <a
-                  href={item.outputAudioUrl}
-                  download={`VoiceCloneStudio_${item.id}.wav`}
-                  className="p-1 px-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg border border-transparent hover:border-indigo-100 transition cursor-pointer flex items-center gap-1 text-[10px] font-mono font-bold"
+                <button
+                  onClick={() => downloadFile(item.outputAudioUrl, `VoiceCloneStudio_${item.id}.wav`)}
+                  className="p-1 px-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-55 rounded-lg border border-transparent hover:border-indigo-100 transition cursor-pointer flex items-center gap-1 text-[10px] font-mono font-bold"
                   title="Download WAV (High Quality Lossless)"
                   id={`download-history-wav-btn-${item.id}`}
+                  type="button"
                 >
                   <Download className="w-3 h-3" />
                   <span>WAV</span>
-                </a>
+                </button>
 
                 {/* Download MP3 File */}
                 {item.outputAudioUrlMp3 && (
-                  <a
-                    href={item.outputAudioUrlMp3}
-                    download={`VoiceCloneStudio_${item.id}.mp3`}
-                    className="p-1 px-2 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg border border-transparent hover:border-emerald-100 transition cursor-pointer flex items-center gap-1 text-[10px] font-mono font-bold"
+                  <button
+                    onClick={() => downloadFile(item.outputAudioUrlMp3, `VoiceCloneStudio_${item.id}.mp3`)}
+                    className="p-1 px-2 text-slate-500 hover:text-emerald-600 hover:bg-emerald-55 rounded-lg border border-transparent hover:border-emerald-100 transition cursor-pointer flex items-center gap-1 text-[10px] font-mono font-bold"
                     title="Download MP3 (Compressed/Highly Compatible)"
                     id={`download-history-mp3-btn-${item.id}`}
+                    type="button"
                   >
                     <Download className="w-3 h-3" />
                     <span>MP3</span>
-                  </a>
+                  </button>
                 )}
 
                 {/* Delete history record */}

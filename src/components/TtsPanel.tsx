@@ -37,6 +37,7 @@ export default function TtsPanel({ voices, selectedVoice, onSelectVoice, onGener
   const [pitch, setPitch] = useState(0);
   const [volume, setVolume] = useState(1.0);
   const [emotion, setEmotion] = useState<"Neutral" | "Happy" | "Excited" | "Serious" | "Calm">("Neutral");
+  const [engine, setEngine] = useState<"Gemini" | "Local DSP">("Gemini");
   
   const [isGenerating, setIsGenerating] = useState(false);
   const [latestItem, setLatestItem] = useState<GeneratedSpeechItem | null>(null);
@@ -221,6 +222,7 @@ export default function TtsPanel({ voices, selectedVoice, onSelectVoice, onGener
         pitch,
         volume,
         emotion,
+        engine,
       };
 
       const res = await fetch("/api/generate", {
@@ -266,6 +268,31 @@ export default function TtsPanel({ voices, selectedVoice, onSelectVoice, onGener
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
+  const downloadFile = async (url: string, filename: string) => {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Network response was not ok");
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      console.error("Failed to download file:", error);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.target = "_blank";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
   return (
     <div 
       id="tts-panel" 
@@ -285,6 +312,18 @@ export default function TtsPanel({ voices, selectedVoice, onSelectVoice, onGener
       {errorMessage && (
         <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs font-medium">
           {errorMessage}
+        </div>
+      )}
+
+      {latestItem?.quotaExceeded && (
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex flex-col gap-1 text-xs">
+          <div className="font-semibold text-amber-800 flex items-center gap-1.5">
+            <span className="text-sm">⚠️</span> Gemini TTS Quota Exceeded (10 requests/day limit)
+          </div>
+          <p className="text-amber-700 leading-relaxed">
+            You have hit the free-tier quota limit for high-fidelity Gemini Text-to-Speech today.
+            Our **high-quality Local DSP voice synthesizer** took over automatically so you can continue creating and downloading voice clones seamlessly!
+          </p>
         </div>
       )}
 
@@ -324,8 +363,8 @@ export default function TtsPanel({ voices, selectedVoice, onSelectVoice, onGener
         </div>
       </div>
 
-      {/* Voice Selection dropdown & Emotion selection */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {/* Voice Selection dropdown, Engine, & Emotion selection */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div>
           <label className="block text-xs font-semibold text-slate-600 mb-2">Selected Voice Profile *</label>
           {readyVoices.length === 0 ? (
@@ -354,6 +393,29 @@ export default function TtsPanel({ voices, selectedVoice, onSelectVoice, onGener
               </div>
             </div>
           )}
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-600 mb-2">Synthesis Engine</label>
+          <div className="relative">
+            <select
+              value={engine}
+              onChange={(e: any) => setEngine(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-800 focus:outline-none focus:border-indigo-500 cursor-pointer appearance-none font-medium text-slate-700"
+              id="engine-select-dropdown"
+            >
+              <option value="Gemini">Gemini TTS (Cloud Preview)</option>
+              <option value="Local DSP">Local DSP (Offline Modulation)</option>
+            </select>
+            <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-slate-500">
+              <ChevronDown className="w-4 h-4" />
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1 leading-tight">
+            {engine === "Gemini" 
+              ? "Uses Google's highly natural multi-modal models." 
+              : "Uses localized digital signal waves calibrated to your clone profile."}
+          </p>
         </div>
 
         <div>
@@ -478,7 +540,7 @@ export default function TtsPanel({ voices, selectedVoice, onSelectVoice, onGener
 
         {/* Hidden Audio element */}
         {latestAudioUrl && (
-          <audio ref={audioRef} src={latestAudioUrl} className="hidden" />
+          <audio ref={audioRef} src={latestItem?.outputAudioUrlMp3 || latestAudioUrl} className="hidden" />
         )}
 
         {/* Custom audio visualizer player drawer */}
@@ -531,29 +593,53 @@ export default function TtsPanel({ voices, selectedVoice, onSelectVoice, onGener
             />
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             {/* Scrubber and Time Tracking */}
-            <div className="text-right font-mono text-[10px] text-slate-500 font-medium">
+            <div className="text-right font-mono text-[10px] text-slate-500 font-medium mr-1">
               {formatTime(currentTime)} / {formatTime(audioDuration)}
             </div>
             
-            {/* Download Button */}
-            <a
-              href={latestAudioUrl || "#"}
-              download={`VoiceCloneStudio_${Date.now()}.wav`}
-              onClick={(e) => {
-                if (!latestAudioUrl) e.preventDefault();
+            {/* Download WAV Button */}
+            <button
+              onClick={() => {
+                if (latestAudioUrl) {
+                  downloadFile(latestAudioUrl, `VoiceCloneStudio_${latestItem?.id || Date.now()}.wav`);
+                }
               }}
-              className={`p-2 rounded-lg border transition ${
+              disabled={!latestAudioUrl}
+              className={`p-1.5 px-2.5 rounded-lg border text-[10px] font-mono font-bold transition flex items-center gap-1 ${
                 latestAudioUrl 
-                  ? "bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700 cursor-pointer" 
+                  ? "bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700 cursor-pointer" 
                   : "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
               }`}
-              title="Download WAV voice synthesis"
-              id="download-latest-btn"
+              title="Download High Quality WAV"
+              id="download-latest-wav-btn"
+              type="button"
             >
-              <Download className="w-4 h-4" />
-            </a>
+              <Download className="w-3 h-3" />
+              <span>WAV</span>
+            </button>
+
+            {/* Download MP3 Button */}
+            <button
+              onClick={() => {
+                if (latestItem?.outputAudioUrlMp3) {
+                  downloadFile(latestItem.outputAudioUrlMp3, `VoiceCloneStudio_${latestItem.id}.mp3`);
+                }
+              }}
+              disabled={!latestItem?.outputAudioUrlMp3}
+              className={`p-1.5 px-2.5 rounded-lg border text-[10px] font-mono font-bold transition flex items-center gap-1 ${
+                latestItem?.outputAudioUrlMp3 
+                  ? "bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700 cursor-pointer" 
+                  : "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
+              }`}
+              title="Download Compressed MP3"
+              id="download-latest-mp3-btn"
+              type="button"
+            >
+              <Download className="w-3 h-3" />
+              <span>MP3</span>
+            </button>
           </div>
         </div>
       </div>

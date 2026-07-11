@@ -23,7 +23,19 @@ app.get("/api/health", (req, res) => {
 app.get("/api/voices", (req, res) => {
   try {
     const voices = db.getVoices();
-    res.json(voices);
+    const voicesWithPreviews = voices.map((voice) => {
+      const samples = db.getSamples(voice.id);
+      if (samples.length > 0) {
+        const sample = samples[0];
+        const previewUrl = `/api/audio/uploads/${path.basename(sample.filePath)}`;
+        return {
+          ...voice,
+          previewUrl,
+        };
+      }
+      return voice;
+    });
+    res.json(voicesWithPreviews);
   } catch (error: any) {
     res.status(500).json({ error: "Failed to retrieve voices", details: error.message });
   }
@@ -99,9 +111,10 @@ app.post("/api/upload", (req, res) => {
       fileSize: fileBuffer.length,
     });
 
+    const previewUrl = `/api/audio/uploads/${path.basename(targetPath)}`;
     res.status(201).json({
       message: "Voice profile created and sample uploaded successfully.",
-      voice: newVoice,
+      voice: { ...newVoice, previewUrl },
       sample,
     });
   } catch (error: any) {
@@ -175,6 +188,7 @@ app.post("/api/generate", async (req, res) => {
       pitch = 0,
       volume = 1.0,
       emotion = "Neutral",
+      engine = "Gemini", // "Gemini" or "Local DSP"
     } = req.body;
 
     if (!voiceId || !inputText) {
@@ -200,7 +214,8 @@ app.post("/api/generate", async (req, res) => {
       parseFloat(speed),
       parseInt(pitch),
       parseFloat(volume),
-      emotion
+      emotion,
+      engine as "Gemini" | "Local DSP"
     );
 
     // Save physical WAV file
@@ -239,6 +254,7 @@ app.post("/api/generate", async (req, res) => {
       characterCount: inputText.length,
       isFallback: result.isFallback,
       engine: result.engine,
+      quotaExceeded: result.quotaExceeded,
     });
 
     res.status(201).json(historyItem);
@@ -300,6 +316,71 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[VoiceClone Studio Server] Running on http://localhost:${PORT}`);
     
+    // 1. Pre-seed Aria (Female) default voice profile if not present
+    try {
+      const ariaVoiceId = "voice_aria_female";
+      const ariaSampleId = "sample_aria_default";
+      const ariaSampleName = "aria_sample.wav";
+      const ariaSamplePath = `data/uploads/${ariaVoiceId}_${ariaSampleId}.wav`;
+
+      db.seedVoiceAtBeginning({
+        id: ariaVoiceId,
+        voiceName: "Aria (Female)",
+        language: "English (US)",
+        accent: "General American",
+        gender: "female",
+        description: "A beautifully warm, clear, and professional female voice calibrated for high-fidelity speech.",
+        status: "Ready",
+        createdAt: new Date().toISOString(),
+        consentConfirmed: true,
+        genderProfile: "female",
+        basePitchOffset: 3,
+        formantShift: 1.12,
+        vocalClarity: 0.95,
+        timbreProfile: {
+          lowShelf: 0.5,
+          midPeak: 1.2,
+          highShelf: 2.0,
+          paceModifier: 1.05
+        },
+        sampleDurations: 5,
+        noiseLevel: "low",
+        sampleCount: 1
+      });
+
+      db.seedSample({
+        id: ariaSampleId,
+        voiceId: ariaVoiceId,
+        fileName: ariaSampleName,
+        filePath: ariaSamplePath,
+        duration: 5,
+        sampleRate: 24000,
+        fileSize: 240044,
+        createdAt: new Date().toISOString()
+      });
+
+      // Ensure default Aria (Female) audio sample is physically generated
+      const sampleFullPath = path.join(process.cwd(), ariaSamplePath);
+      if (!fs.existsSync(sampleFullPath)) {
+        console.log(`[Startup] Generating preview audio file for Aria (Female) default voice profile at ${sampleFullPath}...`);
+        speechEngine.generateAudio(
+          ariaVoiceId,
+          "Hello! I am Aria, your default calibrated voice clone. You can use me to generate highly realistic, natural speech.",
+          1.0, // speed
+          0,   // pitch
+          1.0, // volume
+          "Neutral" // emotion
+        ).then((generated) => {
+          fs.writeFileSync(sampleFullPath, generated.audioBuffer);
+          console.log(`[Startup] Successfully generated Aria (Female) preview sample (${generated.audioBuffer.length} bytes, engine: ${generated.engine})`);
+        }).catch((err) => {
+          console.error("[Startup] Failed to automatically generate Aria preview file:", err);
+        });
+      }
+    } catch (seedErr) {
+      console.error("[Startup] Failed to seed Aria (Female) default voice profile:", seedErr);
+    }
+
     // Automatically resume training for any voice left in 'Training' status
     try {
       const voices = db.getVoices();

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   Sparkles, Plus, Mic, HelpCircle, AlertTriangle, Play, Check, 
   Info, ShieldCheck, ChevronRight 
@@ -18,6 +18,71 @@ export default function App() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [notification, setNotification] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // --- Voice Previews Playback Logic ---
+  const [playingPreviewId, setPlayingPreviewId] = useState<string | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handlePlayPreview = (voice: VoiceProfile) => {
+    if (!voice.previewUrl) return;
+
+    // Toggle off if clicking the currently playing voice
+    if (playingPreviewId === voice.id) {
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+      }
+      setPlayingPreviewId(null);
+      return;
+    }
+
+    // Stop active audio
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+    }
+
+    // Set new audio source
+    if (!previewAudioRef.current) {
+      previewAudioRef.current = new Audio(voice.previewUrl);
+    } else {
+      previewAudioRef.current.src = voice.previewUrl;
+    }
+
+    previewAudioRef.current.onended = () => {
+      setPlayingPreviewId(null);
+    };
+
+    previewAudioRef.current.onerror = (e) => {
+      console.error("Preview audio playback error:", e);
+      setPlayingPreviewId(null);
+      showNotification("error", "Failed to load voice preview sample.");
+    };
+
+    previewAudioRef.current.load();
+    previewAudioRef.current.play()
+      .then(() => {
+        setPlayingPreviewId(voice.id);
+      })
+      .catch((err) => {
+        console.error("Audio play blocked/failed:", err);
+        setPlayingPreviewId(null);
+      });
+  };
+
+  const handlePausePreview = () => {
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+    }
+    setPlayingPreviewId(null);
+  };
+
+  // Clean up audio on unmount
+  useEffect(() => {
+    return () => {
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+      }
+    };
+  }, []);
 
   // --- API Integrations ---
 
@@ -282,6 +347,9 @@ export default function App() {
                       onDelete={handleDeleteVoice}
                       onSelectForTts={(v) => setSelectedVoice(v)}
                       onRefreshStatus={handleRefreshVoiceStatus}
+                      isPlayingPreview={playingPreviewId === voice.id}
+                      onPlayPreview={handlePlayPreview}
+                      onPausePreview={handlePausePreview}
                     />
                   ))}
                 </div>

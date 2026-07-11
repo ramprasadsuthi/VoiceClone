@@ -27,6 +27,7 @@ export interface VoiceProfile {
   sampleDurations: number; // total duration of training samples in seconds
   noiseLevel: string; // "low" | "medium" | "high"
   sampleCount: number;
+  previewUrl?: string;
 }
 
 export interface UserAudioSample {
@@ -58,6 +59,7 @@ export interface GeneratedSpeechItem {
   characterCount: number;
   isFallback?: boolean;
   engine?: "Gemini TTS" | "Local DSP";
+  quotaExceeded?: boolean;
 }
 
 interface DbSchema {
@@ -125,6 +127,22 @@ class Database {
   public getVoices(): VoiceProfile[] {
     this.load();
     return this.data.voices;
+  }
+
+  public seedVoiceAtBeginning(voice: VoiceProfile) {
+    this.load();
+    if (!this.data.voices.some((v) => v.id === voice.id)) {
+      this.data.voices.unshift(voice);
+      this.save();
+    }
+  }
+
+  public seedSample(sample: UserAudioSample) {
+    this.load();
+    if (!this.data.samples.some((s) => s.id === sample.id)) {
+      this.data.samples.push(sample);
+      this.save();
+    }
   }
 
   public getVoice(id: string): VoiceProfile | undefined {

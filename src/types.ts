@@ -17,6 +17,7 @@ export interface VoiceProfile {
   noiseLevel: string;
   sampleCount: number;
   sampleDurations: number;
+  previewUrl?: string;
   timbreProfile: {
     lowShelf: number;
     midPeak: number;
@@ -54,4 +55,5 @@ export interface GeneratedSpeechItem {
   characterCount: number;
   isFallback?: boolean;
   engine?: "Gemini TTS" | "Local DSP";
+  quotaExceeded?: boolean;
 }
