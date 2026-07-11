@@ -1,0 +1,6 @@
+{
+  "name": "VoiceClone Studio",
+  "description": "Create your own AI voice and generate realistic speech. Upload voice samples, train a personalized AI voice profile, and generate high-fidelity speech with pitch, speed, and emotional control.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
