@@ -1,7 +1,86 @@
 import fs from "fs";
 import path from "path";
+import vm from "vm";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { db, VoiceProfile } from "./database.ts";
+
+// Pure JavaScript MP3 Encoder loaded via sandboxed VM context to prevent global scope errors in strict environments
+let Mp3EncoderClass: any = null;
+
+function getMp3EncoderClass() {
+  if (!Mp3EncoderClass) {
+    try {
+      const filePath = path.join(process.cwd(), "node_modules", "lamejs", "lame.all.js");
+      const code = fs.readFileSync(filePath, "utf8");
+      const sandbox = {
+        console,
+        Int8Array,
+        Int16Array,
+        Int32Array,
+        Float32Array,
+        Float64Array,
+        Array,
+        Math,
+        Buffer
+      };
+      vm.createContext(sandbox);
+      vm.runInContext(code, sandbox);
+      // @ts-ignore
+      if (sandbox.lamejs && sandbox.lamejs.Mp3Encoder) {
+        // @ts-ignore
+        Mp3EncoderClass = sandbox.lamejs.Mp3Encoder;
+        console.log("SpeechEngine: Successfully loaded pure JS Mp3Encoder Class via VM Sandbox");
+      } else {
+        throw new Error("lamejs.Mp3Encoder not found in sandbox");
+      }
+    } catch (err) {
+      console.error("SpeechEngine: Failed to load lamejs MP3 encoder via VM sandbox:", err);
+      throw err;
+    }
+  }
+  return Mp3EncoderClass;
+}
+
+export function encodePCMToMP3(pcmBuffer: Buffer, sampleRate: number = 24000, kbps: number = 128): Buffer {
+  const Mp3Encoder = getMp3EncoderClass();
+  const channels = 1; // Mono PCM from Gemini/synthesis
+  const encoder = new Mp3Encoder(channels, sampleRate, kbps);
+  
+  const samples = new Int16Array(
+    pcmBuffer.buffer,
+    pcmBuffer.byteOffset,
+    pcmBuffer.length / 2
+  );
+  
+  const mp3Chunks: Buffer[] = [];
+  const sampleBlockSize = 1152;
+  
+  for (let i = 0; i < samples.length; i += sampleBlockSize) {
+    const chunk = samples.subarray(i, i + sampleBlockSize);
+    
+    // Copy chunk to clean typed array to ensure correct alignment and offset bounds
+    const cleanChunk = new Int16Array(chunk.length);
+    cleanChunk.set(chunk);
+    
+    const mp3buf = encoder.encodeBuffer(cleanChunk);
+    if (mp3buf && mp3buf.length > 0) {
+      mp3Chunks.push(Buffer.from(mp3buf));
+    }
+  }
+  
+  const mp3Flush = encoder.flush();
+  if (mp3Flush && mp3Flush.length > 0) {
+    mp3Chunks.push(Buffer.from(mp3Flush));
+  }
+  
+  return Buffer.concat(mp3Chunks);
+}
+
+export function convertWavToMp3(wavBuffer: Buffer, sampleRate: number = 24000): Buffer {
+  // Slices off the 44-byte WAV header to get raw 16-bit PCM
+  const pcmBuffer = wavBuffer.subarray(44);
+  return encodePCMToMP3(pcmBuffer, sampleRate);
+}
 
 // Helper to convert PCM buffer to fully compliant WAV file buffer (16-bit Mono PCM)
 export function writeWavHeader(pcmBuffer: Buffer, sampleRate: number = 24000): Buffer {
@@ -228,7 +307,13 @@ export class SpeechEngine {
     pitch: number, // -10 to +10 semitones
     volume: number, // 0.0 to 1.0
     emotion: "Neutral" | "Happy" | "Excited" | "Serious" | "Calm"
-  ): Promise<{ audioBuffer: Buffer; durationSeconds: number; pcmSampleRate: number }> {
+  ): Promise<{ 
+    audioBuffer: Buffer; 
+    durationSeconds: number; 
+    pcmSampleRate: number;
+    isFallback: boolean;
+    engine: "Gemini TTS" | "Local DSP";
+  }> {
     const voice = db.getVoice(voiceId);
     if (!voice || voice.status !== "Ready") {
       throw new Error(`Voice profile ${voiceId} is not trained or ready`);
@@ -241,12 +326,29 @@ export class SpeechEngine {
       const aiClient = this.initAI();
       if (aiClient) {
         // Map our gender profile to an appropriate Gemini TTS base prebuilt voice
-        // Puck, Charon, Kore, Fenrir, Zephyr
-        let prebuiltVoice = "Zephyr"; // standard warm masculine
+        // Valid Gemini voice names: Puck, Charon, Kore, Fenrir, Aoede
+        let prebuiltVoice = "Charon"; // Default to a standard warm masculine/neutral voice
+        
+        const desc = (voice.description || "").toLowerCase();
         if (voice.genderProfile === "female") {
-          prebuiltVoice = "Kore"; // crisp feminine
-        } else if (voice.genderProfile === "neutral") {
-          prebuiltVoice = "Charon"; // neutral balance
+          // If description indicates high/bright/cheerful or has pitch/formant shifts, use Aoede, otherwise Kore
+          if (desc.includes("bright") || desc.includes("cheerful") || desc.includes("expressive") || desc.includes("high") || (voice.formantShift && voice.formantShift > 1.02)) {
+            prebuiltVoice = "Aoede"; // Bright/expressive feminine
+          } else {
+            prebuiltVoice = "Kore"; // Crisp/clear standard feminine
+          }
+        } else if (voice.genderProfile === "male") {
+          // If description indicates deep/resonant or has low pitch shifts, use Fenrir, otherwise Charon or Puck
+          if (desc.includes("deep") || desc.includes("resonant") || desc.includes("low") || desc.includes("gravelly") || (voice.basePitchOffset && voice.basePitchOffset < -1)) {
+            prebuiltVoice = "Fenrir"; // Deep masculine
+          } else if (desc.includes("energetic") || desc.includes("young") || desc.includes("fast") || desc.includes("bright") || (voice.formantShift && voice.formantShift > 1.0)) {
+            prebuiltVoice = "Puck"; // Energetic, high-pitch masculine
+          } else {
+            prebuiltVoice = "Charon"; // Warm, professional masculine/neutral
+          }
+        } else {
+          // Neutral profile
+          prebuiltVoice = "Charon"; // Balanced neutral/masculine
         }
 
         // Apply emotional prompts, pitch, and speed context dynamically to Gemini TTS prompt
@@ -291,13 +393,15 @@ export class SpeechEngine {
             audioBuffer: wavBuffer,
             durationSeconds: durationSeconds,
             pcmSampleRate: pcmSampleRate,
+            isFallback: false,
+            engine: "Gemini TTS",
           };
         } else {
           throw new Error("No inline audio data returned from Gemini TTS");
         }
       }
-    } catch (apiErr) {
-      console.error("SpeechEngine: Gemini TTS Synthesis failed, using high-quality synthesized fallback:", apiErr);
+    } catch (apiErr: any) {
+      console.warn("SpeechEngine: Gemini TTS Synthesis failed, using high-quality synthesized fallback. Details:", apiErr?.message || apiErr);
     }
 
     // High-quality Synthesized DSP Fallback (Generates simulated speaking waveforms to make the app fully functional offline)
@@ -369,6 +473,8 @@ export class SpeechEngine {
       audioBuffer: wavBuffer,
       durationSeconds: durationSeconds,
       pcmSampleRate: sampleRate,
+      isFallback: true,
+      engine: "Local DSP",
     };
   }
 }

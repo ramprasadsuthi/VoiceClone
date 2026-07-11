@@ -47,6 +47,8 @@ export interface GeneratedSpeechItem {
   inputText: string;
   outputAudioPath: string; // local file path relative to data dir
   outputAudioUrl: string; // HTTP accessible path
+  outputAudioPathMp3?: string; // local MP3 file path
+  outputAudioUrlMp3?: string; // HTTP accessible MP3 path
   speed: number; // 0.5 to 2.0
   pitch: number; // -10 to +10 semitones
   volume: number; // 0.0 to 1.0
@@ -54,6 +56,8 @@ export interface GeneratedSpeechItem {
   createdAt: string;
   durationSeconds: number;
   characterCount: number;
+  isFallback?: boolean;
+  engine?: "Gemini TTS" | "Local DSP";
 }
 
 interface DbSchema {
@@ -255,6 +259,12 @@ class Database {
       const fullPath = path.join(process.cwd(), item.outputAudioPath);
       if (fs.existsSync(fullPath)) {
         fs.unlinkSync(fullPath);
+      }
+      if (item.outputAudioPathMp3) {
+        const fullPathMp3 = path.join(process.cwd(), item.outputAudioPathMp3);
+        if (fs.existsSync(fullPathMp3)) {
+          fs.unlinkSync(fullPathMp3);
+        }
       }
     } catch (err) {
       console.error(`Failed to delete physical generated file: ${item.outputAudioPath}`, err);

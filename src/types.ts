@@ -43,6 +43,8 @@ export interface GeneratedSpeechItem {
   inputText: string;
   outputAudioPath: string;
   outputAudioUrl: string;
+  outputAudioPathMp3?: string;
+  outputAudioUrlMp3?: string;
   speed: number;
   pitch: number;
   volume: number;
@@ -50,4 +52,6 @@ export interface GeneratedSpeechItem {
   createdAt: string;
   durationSeconds: number;
   characterCount: number;
+  isFallback?: boolean;
+  engine?: "Gemini TTS" | "Local DSP";
 }

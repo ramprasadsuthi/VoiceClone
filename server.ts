@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { db } from "./server/database.ts";
-import { speechEngine } from "./server/speech.ts";
+import { speechEngine, convertWavToMp3 } from "./server/speech.ts";
 
 const app = express();
 const PORT = 3000;
@@ -203,12 +203,24 @@ app.post("/api/generate", async (req, res) => {
       emotion
     );
 
-    // Save physical file
+    // Save physical WAV file
     const fileId = "gen_" + Math.random().toString(36).substr(2, 9);
     const fileName = `${fileId}.wav`;
     const outputPath = path.join(db.getGeneratedDir(), fileName);
-
     fs.writeFileSync(outputPath, result.audioBuffer);
+
+    // Convert and save physical MP3 file
+    let mp3FileName = "";
+    let mp3OutputPath = "";
+    try {
+      const mp3Buffer = convertWavToMp3(result.audioBuffer, result.pcmSampleRate);
+      mp3FileName = `${fileId}.mp3`;
+      mp3OutputPath = path.join(db.getGeneratedDir(), mp3FileName);
+      fs.writeFileSync(mp3OutputPath, mp3Buffer);
+      console.log(`SpeechEngine: Successfully saved MP3 file: ${mp3FileName}`);
+    } catch (mp3Err) {
+      console.error("Failed to convert/save MP3 file:", mp3Err);
+    }
 
     // Add to Database History
     const historyItem = db.addHistoryItem({
@@ -217,12 +229,16 @@ app.post("/api/generate", async (req, res) => {
       inputText,
       outputAudioPath: path.relative(process.cwd(), outputPath),
       outputAudioUrl: `/api/audio/generated/${fileName}`,
+      outputAudioPathMp3: mp3OutputPath ? path.relative(process.cwd(), mp3OutputPath) : undefined,
+      outputAudioUrlMp3: mp3FileName ? `/api/audio/generated/${mp3FileName}` : undefined,
       speed: parseFloat(speed),
       pitch: parseInt(pitch),
       volume: parseFloat(volume),
       emotion,
       durationSeconds: result.durationSeconds,
       characterCount: inputText.length,
+      isFallback: result.isFallback,
+      engine: result.engine,
     });
 
     res.status(201).json(historyItem);

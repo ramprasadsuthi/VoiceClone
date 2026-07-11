@@ -39,6 +39,7 @@ export default function TtsPanel({ voices, selectedVoice, onSelectVoice, onGener
   const [emotion, setEmotion] = useState<"Neutral" | "Happy" | "Excited" | "Serious" | "Calm">("Neutral");
   
   const [isGenerating, setIsGenerating] = useState(false);
+  const [latestItem, setLatestItem] = useState<GeneratedSpeechItem | null>(null);
   const [latestAudioUrl, setLatestAudioUrl] = useState<string | null>(null);
   const [audioDuration, setAudioDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -236,6 +237,7 @@ export default function TtsPanel({ voices, selectedVoice, onSelectVoice, onGener
       const generatedItem: GeneratedSpeechItem = await res.json();
       
       // Update UI with latest audio output
+      setLatestItem(generatedItem);
       setLatestAudioUrl(generatedItem.outputAudioUrl);
       onGenerationComplete(generatedItem);
 
@@ -498,13 +500,24 @@ export default function TtsPanel({ voices, selectedVoice, onSelectVoice, onGener
             </button>
             <div className="text-left">
               <span className="text-[10px] font-mono text-slate-500 block">Status:</span>
-              <span className="text-xs text-slate-700 font-semibold">
-                {isGenerating 
-                  ? "Generating..." 
-                  : latestAudioUrl 
-                    ? "Audio Ready" 
-                    : "No Audio Generated"}
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-slate-700 font-semibold">
+                  {isGenerating 
+                    ? "Generating..." 
+                    : latestAudioUrl 
+                      ? "Audio Ready" 
+                      : "No Audio Generated"}
+                </span>
+                {latestAudioUrl && latestItem?.engine && (
+                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold tracking-wider uppercase border leading-none ${
+                    latestItem.isFallback 
+                      ? "bg-amber-50 text-amber-700 border-amber-200" 
+                      : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                  }`}>
+                    {latestItem.engine}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 

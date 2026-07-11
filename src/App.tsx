@@ -139,7 +139,11 @@ export default function App() {
   // Triggered when a new clip completes generation
   const handleGenerationComplete = (newItem: GeneratedSpeechItem) => {
     setHistory((prev) => [newItem, ...prev]);
-    showNotification("success", "Custom audio synthesized successfully!");
+    if (newItem.isFallback) {
+      showNotification("success", "Speech synthesized successfully using Local DSP fallback (Gemini API limit reached).");
+    } else {
+      showNotification("success", "Custom audio synthesized successfully!");
+    }
   };
 
   // Notification Helper
