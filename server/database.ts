@@ -218,10 +218,6 @@ class Database {
       const voiceSamples = this.data.samples.filter((s) => s.voiceId === sample.voiceId);
       voice.sampleCount = voiceSamples.length;
       voice.sampleDurations = voiceSamples.reduce((sum, s) => sum + s.duration, 0);
-      this.updateVoice(voice.id, {
-        sampleCount: voice.sampleCount,
-        sampleDurations: voice.sampleDurations,
-      });
     }
 
     this.save();

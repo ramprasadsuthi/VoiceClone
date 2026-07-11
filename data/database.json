@@ -1,0 +1,41 @@
+{
+  "voices": [
+    {
+      "voiceName": "ram1",
+      "language": "English (US)",
+      "accent": "General Indian",
+      "gender": "male",
+      "description": "A resonant, clear male voice speaking at a measured pace with slight room echo.",
+      "consentConfirmed": true,
+      "id": "voice_mwxa58z7i",
+      "status": "Ready",
+      "createdAt": "2026-07-11T10:38:04.245Z",
+      "genderProfile": "male",
+      "basePitchOffset": -1,
+      "formantShift": 0.97,
+      "vocalClarity": 0.75,
+      "timbreProfile": {
+        "lowShelf": 1.5,
+        "midPeak": -1,
+        "highShelf": -2,
+        "paceModifier": 0.95
+      },
+      "sampleDurations": 198,
+      "noiseLevel": "low",
+      "sampleCount": 1
+    }
+  ],
+  "samples": [
+    {
+      "id": "sample_d2eeij7m1",
+      "voiceId": "voice_mwxa58z7i",
+      "fileName": "voice_mwxa58z7i_sample_d2eeij7m1.m4a",
+      "filePath": "data/uploads/voice_mwxa58z7i_sample_d2eeij7m1.m4a",
+      "duration": 198,
+      "sampleRate": 44100,
+      "fileSize": 3168000,
+      "createdAt": "2026-07-11T10:38:04.250Z"
+    }
+  ],
+  "history": []
+}

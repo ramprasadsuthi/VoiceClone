@@ -283,6 +283,25 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[VoiceClone Studio Server] Running on http://localhost:${PORT}`);
+    
+    // Automatically resume training for any voice left in 'Training' status
+    try {
+      const voices = db.getVoices();
+      const trainingVoices = voices.filter((v) => v.status === "Training");
+      for (const voice of trainingVoices) {
+        console.log(`[Startup] Resuming background training for voice: ${voice.voiceName} (${voice.id})`);
+        speechEngine.trainVoice(voice.id)
+          .then((trainedVoice) => {
+            console.log(`[Startup] Background training completed successfully for voice: ${trainedVoice.voiceName}`);
+          })
+          .catch((err) => {
+            console.error(`[Startup] Background training failed for voice ${voice.id}:`, err);
+            db.updateVoice(voice.id, { status: "Failed" });
+          });
+      }
+    } catch (err) {
+      console.error("[Startup] Failed to check or resume voice training:", err);
+    }
   });
 }
 
